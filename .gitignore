@@ -11,3 +11,4 @@ venv/
 
 # note: data/clean_transactions.parquet IS committed (Streamlit Cloud needs it)
 !data/clean_transactions.parquet
+data/*.zip
