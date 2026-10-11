@@ -23,7 +23,8 @@ def _con(parquet_path=None, countries=None, date_range=None):
         where.append(f"country IN ({lst})")
     if date_range:
         where.append(f"invoice_date >= '{date_range[0]}'")
-        where.append(f"invoice_date < '{date_range[1]}'")
+        # the end date is inclusive: keep the whole of the last selected day
+        where.append(f"invoice_date < DATE '{date_range[1]}' + INTERVAL 1 DAY")
     con.execute(
         f"CREATE VIEW tx AS SELECT * FROM read_parquet('{path}') WHERE {' AND '.join(where)}"
     )
@@ -58,14 +59,19 @@ def segment_summary(**f) -> pd.DataFrame:
     df = rfm(**f)
     if df.empty:
         return df
-    return (
+    out = (
         df.groupby("segment")
         .agg(customers=("customer_id", "count"),
-             avg_monetary=("monetary", "mean"),
+             avg_ltv=("monetary", "mean"),         # historical revenue per customer
+             avg_orders=("frequency", "mean"),
+             avg_recency_days=("recency_days", "mean"),
              total_monetary=("monetary", "sum"))
         .reset_index()
         .sort_values("total_monetary", ascending=False)
     )
+    out["share_of_customers"] = out["customers"] / out["customers"].sum()
+    out["share_of_revenue"] = out["total_monetary"] / out["total_monetary"].sum()
+    return out
 
 
 def churn_rate(threshold_days: int, **f) -> float:
@@ -96,6 +102,8 @@ def monthly_revenue(**f) -> pd.DataFrame:
     df = con.execute(
         """SELECT date_trunc('month', invoice_date) AS month,
                   ROUND(SUM(revenue)) AS revenue,
+                  COUNT(DISTINCT invoice) AS orders,
+                  ROUND(SUM(revenue) / COUNT(DISTINCT invoice), 2) AS avg_order_value,
                   COUNT(DISTINCT customer_id) AS active_customers
            FROM tx GROUP BY month ORDER BY month"""
     ).df()
